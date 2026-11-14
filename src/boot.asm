@@ -4,7 +4,7 @@
 
 KERNEL_OFFSET equ 0x1000
 %ifndef KERNEL_SECTORS
-%define KERNEL_SECTORS 32
+%define KERNEL_SECTORS 48
 %endif
 
 jmp 0x0000:start

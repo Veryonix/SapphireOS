@@ -1,6 +1,6 @@
 # SapphireOS
 
-16-bit BIOS boot sector and 32-bit NASM kernel. QEMU boots a VGA text shell. COM1 prints `SapphireOS ready` at startup.
+16-bit BIOS boot sector and 32-bit NASM kernel. QEMU boots an 800x600 desktop (VBE mode `0x143`, 32 bits per pixel). COM1 prints `SapphireOS ready`, then `desktop up`.
 
 ## Build
 
@@ -23,24 +23,32 @@ make run
 That runs:
 
 ```sh
-qemu-system-i386 -drive format=raw,file=build/sapphireos.img -serial stdio
+qemu-system-i386 -drive format=raw,file=build/sapphireos.img -vga std -serial stdio
 ```
 
 Headless serial check:
 
 ```sh
-timeout 8 qemu-system-i386 -drive format=raw,file=build/sapphireos.img -serial stdio -display none
+timeout 8 qemu-system-i386 -drive format=raw,file=build/sapphireos.img -vga std -serial stdio -display none
 ```
+
+If the video mode cannot be set, SapphireOS keeps the text shell and prints `VBE mode set failed`.
+
+## Desktop
+
+The top bar is labeled SapphireOS. Move the PS/2 mouse to move the cursor. Drag a window by its title bar. Click a window to raise it.
+
+The Terminal window runs the shell. Backspace deletes a character. Enter runs the line.
 
 ## Shell
 
-Prompt is `sapphire>`. Backspace deletes a character. Enter runs the line.
+Prompt is `sapphire>`.
 
 - `help` — list commands
-- `clear` — clear the screen
+- `clear` — clear the terminal
 - `about` — version and description
 - `echo TEXT` — print TEXT
-- `color HH` — set the VGA attribute to the hex byte HH
+- `color HH` — set the terminal attribute to the hex byte HH
 - `reboot` — reboot by pulsing the keyboard controller
 
 An unknown command prints `Unknown command`.
