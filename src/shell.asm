@@ -31,7 +31,7 @@ msg_help:
 
 msg_about:
     db "SapphireOS v0.1", 10
-    db "NASM kernel with a BIOS boot sector, VGA text, and a PS/2 shell.", 10
+    db "NASM kernel with a BIOS boot sector, a VBE desktop, and a PS/2 shell.", 10
     db 0
 
 msg_unknown db "Unknown command", 10, 0
@@ -40,10 +40,7 @@ msg_color_usage db "Usage: color HH", 10, 0
 msg_reboot db "Rebooting...", 10, 0
 
 shell_main:
-    call vga_clear
-    mov esi, banner
-    call vga_puts
-    call shell_prompt
+    call shell_init
 .loop:
     cli
     call kbuf_pop
@@ -56,10 +53,17 @@ shell_main:
     call shell_on_char
     jmp .loop
 
+shell_init:
+    call con_clear
+    mov esi, banner
+    call con_puts
+    call shell_prompt
+    ret
+
 shell_prompt:
     push esi
     mov esi, prompt
-    call vga_puts
+    call con_puts
     pop esi
     ret
 
@@ -80,7 +84,7 @@ shell_on_char:
     inc ebx
     mov [line_len], ebx
     mov byte [line_buf + ebx], 0
-    call vga_putc
+    call con_putc
     ret
 .bs:
     cmp dword [line_len], 0
@@ -88,10 +92,10 @@ shell_on_char:
     dec dword [line_len]
     mov ebx, [line_len]
     mov byte [line_buf + ebx], 0
-    call vga_backspace
+    call con_backspace
     ret
 .enter:
-    call vga_newline
+    call con_newline
     call shell_exec
     mov dword [line_len], 0
     mov byte [line_buf], 0
@@ -109,20 +113,20 @@ shell_exec:
     call cmd_eq
     jc .try_clear
     mov esi, msg_help
-    call vga_puts
+    call con_puts
     jmp .done
 .try_clear:
     mov edi, cmd_clear
     call cmd_eq
     jc .try_about
-    call vga_clear
+    call con_clear
     jmp .done
 .try_about:
     mov edi, cmd_about
     call cmd_eq
     jc .try_echo
     mov esi, msg_about
-    call vga_puts
+    call con_puts
     jmp .done
 .try_echo:
     mov edi, cmd_echo
@@ -144,7 +148,7 @@ shell_exec:
     jmp .done
 .unknown:
     mov esi, msg_unknown
-    call vga_puts
+    call con_puts
 .done:
     ret
 
@@ -152,9 +156,9 @@ do_echo:
     call skip_spaces
     cmp byte [esi], 0
     je .nl
-    call vga_puts
+    call con_puts
 .nl:
-    call vga_newline
+    call con_newline
     ret
 
 do_color:
@@ -168,21 +172,21 @@ do_color:
     cmp byte [esi], 0
     jne .usage
     mov [vga_attr], bl
-    call vga_recolor
+    call con_recolor
     mov esi, msg_color_set
-    call vga_puts
+    call con_puts
     mov al, bl
-    call vga_put_hex8
-    call vga_newline
+    call con_put_hex8
+    call con_newline
     ret
 .usage:
     mov esi, msg_color_usage
-    call vga_puts
+    call con_puts
     ret
 
 do_reboot:
     mov esi, msg_reboot
-    call vga_puts
+    call con_puts
     cli
 .wait:
     in al, 0x64

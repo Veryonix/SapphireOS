@@ -5,9 +5,9 @@ BUILD := build
 IMAGE := $(BUILD)/sapphireos.img
 BOOT := $(BUILD)/boot.bin
 KERNEL := $(BUILD)/kernel.bin
-KERNEL_SECTORS := 32
+KERNEL_SECTORS := 48
 
-KERNEL_SRCS := src/kernel.asm src/gdt.asm src/serial.asm src/vga.asm src/irq.asm src/keyboard.asm src/shell.asm
+KERNEL_SRCS := src/kernel.asm src/gdt.asm src/serial.asm src/vga.asm src/irq.asm src/keyboard.asm src/shell.asm src/vbe.asm src/mouse.asm src/font.asm src/gui.asm
 
 .PHONY: all run clean
 
@@ -30,7 +30,7 @@ $(IMAGE): $(BOOT) $(KERNEL)
 	dd if=$(KERNEL) of=$@ conv=notrunc bs=512 seek=1 status=none
 
 run: all
-	$(QEMU) -drive format=raw,file=$(IMAGE) -serial stdio
+	$(QEMU) -drive format=raw,file=$(IMAGE) -vga std -serial stdio -display gtk,zoom-to-fit=off,grab-on-hover=off
 
 clean:
 	rm -rf $(BUILD)

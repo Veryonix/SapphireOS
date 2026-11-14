@@ -20,6 +20,8 @@ keyboard_handle:
     in al, dx
     test al, 1
     jz .done
+    test al, 0x20
+    jnz .done
     mov dx, 0x60
     in al, dx
     call on_scancode

@@ -1,5 +1,5 @@
 ; PIC remap and IDT. Hardware IRQs land at vectors 0x20-0x2F.
-; Keyboard IRQ1 is vector 0x21.
+; Keyboard IRQ1 is vector 0x21. Mouse IRQ12 is vector 0x2C.
 
 pic_remap:
     push eax
@@ -39,11 +39,11 @@ pic_remap:
     out dx, al
     call io_wait
 
-    ; IRQ1 only. Mask the slave.
-    mov al, 0xFD
+    ; IRQ1 keyboard and IRQ2 cascade. IRQ12 is slave input 4.
+    mov al, 0xF8
     mov dx, 0x21
     out dx, al
-    mov al, 0xFF
+    mov al, 0xEF
     mov dx, 0xA1
     out dx, al
 
@@ -111,10 +111,18 @@ isr_common:
     mov gs, ax
 
     mov ebx, [esp + 36]
+    cmp ebx, 32
+    jne .not_tick
+    inc dword [timer_ticks]
+.not_tick:
     cmp ebx, 33
     jne .not_kbd
     call keyboard_handle
 .not_kbd:
+    cmp ebx, 44
+    jne .not_mouse
+    call mouse_handle
+.not_mouse:
     cmp ebx, 32
     jb .exception
     cmp ebx, 40
