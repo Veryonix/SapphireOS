@@ -1,14 +1,15 @@
-; 800x600 desktop. Compact chrome, 8px text, resize, multi-terminal.
+; 800x600 desktop. Compact chrome, 8x16 text, resize, multi-terminal.
 
-MENU_H equ 18
+MENU_H equ 22
 TOP_H equ MENU_H
 BORDER equ 1
-TITLE_H equ 18
+TITLE_H equ 22
 PAD equ 4
 FONT equ 8
-TEXT_DY equ (TITLE_H - FONT) / 2
-TERM_COLS equ 48
-TERM_ROWS equ 14
+FONT_H equ 16
+TEXT_DY equ (TITLE_H - FONT_H) / 2
+TERM_COLS equ 46
+TERM_ROWS equ 10
 TERM_COUNT equ 3
 ABOUT_ID equ 3
 WIN_COUNT equ 4
@@ -27,7 +28,7 @@ CUR_S equ 16
 BACK_BUFFER equ 0x100000
 BTN_R equ 4
 DROP_W equ 132
-DROP_H equ 16
+DROP_H equ 20
 MENU_FILE_X equ 92
 MENU_EDIT_X equ 132
 MENU_VIEW_X equ 172
@@ -40,7 +41,7 @@ MIN_WIN_W equ 160
 MIN_WIN_H equ (TITLE_H + 48)
 
 TERM_W equ BORDER * 2 + PAD * 2 + TERM_COLS * FONT
-TERM_H equ BORDER * 2 + TITLE_H + PAD * 2 + TERM_ROWS * FONT
+TERM_H equ BORDER * 2 + TITLE_H + PAD * 2 + TERM_ROWS * FONT_H
 
 %macro FILL 5
     push dword %5
@@ -136,11 +137,11 @@ vga_pal times 16 dd 0
 win_x dd 16, 36, 56, 420
 win_y dd 28, 48, 68, 48
 win_w dd TERM_W, TERM_W, TERM_W, 200
-win_h dd TERM_H, TERM_H, TERM_H, 110
+win_h dd TERM_H, TERM_H, TERM_H, 148
 win_sx dd 16, 36, 56, 420
 win_sy dd 28, 48, 68, 48
 win_sw dd TERM_W, TERM_W, TERM_W, 200
-win_sh dd TERM_H, TERM_H, TERM_H, 110
+win_sh dd TERM_H, TERM_H, TERM_H, 148
 win_title dd title_term, title_term, title_term, title_about
 win_kind db 0, 0, 0, 1
 win_z db 1, 2, 3, 0
@@ -1488,7 +1489,7 @@ draw_terminal:
     shr ebx, 4
     and ebx, 0x0F
     mov edx, [vga_pal + ebx * 4]
-    FILL [origin_x], [origin_y], TERM_COLS * FONT, TERM_ROWS * FONT, edx
+    FILL [origin_x], [origin_y], TERM_COLS * FONT, TERM_ROWS * FONT_H, edx
 
     movzx eax, byte [vga_attr]
     and eax, 0x0F
@@ -1520,7 +1521,7 @@ draw_terminal:
     imul eax, FONT
     add eax, [origin_x]
     mov edx, ecx
-    imul edx, FONT
+    imul edx, FONT_H
     add edx, [origin_y]
     mov ebx, edx
     push esi
@@ -1662,7 +1663,7 @@ draw_string:
     ret
 
 ; Stack: x, y, character, foreground, background.
-; 1:1 8x8 glyphs. Bit 0 of each font row is the leftmost pixel.
+; 8x16 glyphs. Bit 0 of each font row is the leftmost pixel.
 draw_char:
     pushad
     mov ebp, esp
@@ -1679,6 +1680,9 @@ draw_char:
     jge .done
     mov bl, [esi]
     inc esi
+    mov al, bl
+    shr al, 1
+    or bl, al
     xor edx, edx
 .col:
     cmp edx, 8
@@ -1687,28 +1691,22 @@ draw_char:
     jnz .fg
     cmp dword [ebp + 52], -1
     je .advance
-    push ebx
-    push ecx
-    push edx
-    mov eax, [ebp + 36]
-    add eax, edx
-    mov ebx, [ebp + 40]
-    add ebx, ecx
-    mov edx, [ebp + 52]
-    call put_pixel
-    pop edx
-    pop ecx
-    pop ebx
-    jmp .advance
+    mov edi, [ebp + 52]
+    jmp .pix
 .fg:
+    mov edi, [ebp + 48]
+.pix:
     push ebx
     push ecx
     push edx
     mov eax, [ebp + 36]
     add eax, edx
-    mov ebx, [ebp + 40]
-    add ebx, ecx
-    mov edx, [ebp + 48]
+    mov ebx, ecx
+    shl ebx, 1
+    add ebx, [ebp + 40]
+    mov edx, edi
+    call put_pixel
+    inc ebx
     call put_pixel
     pop edx
     pop ecx

@@ -44,7 +44,7 @@ File → New Terminal opens another Terminal (up to three). Each has its own buf
 
 The Terminal window runs the shell. Backspace deletes a character. Enter runs the line.
 
-`make run` shows the 800x600 framebuffer at 1:1 in a GTK window (`zoom-to-fit=off`), so the desktop stays 4:3. On-screen text is 8×8 pixels.
+`make run` shows the 800x600 framebuffer at 1:1 in a GTK window (`zoom-to-fit=off`), so the desktop stays 4:3. On-screen text is 8 pixels wide and 16 tall.
 
 ## Shell
 
