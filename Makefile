@@ -30,7 +30,7 @@ $(IMAGE): $(BOOT) $(KERNEL)
 	dd if=$(KERNEL) of=$@ conv=notrunc bs=512 seek=1 status=none
 
 run: all
-	$(QEMU) -drive format=raw,file=$(IMAGE) -vga std -serial stdio -display gtk,zoom-to-fit=off
+	$(QEMU) -drive format=raw,file=$(IMAGE) -vga std -serial stdio -display gtk,zoom-to-fit=off,grab-on-hover=off
 
 clean:
 	rm -rf $(BUILD)

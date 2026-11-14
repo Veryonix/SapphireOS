@@ -23,7 +23,7 @@ make run
 That runs:
 
 ```sh
-qemu-system-i386 -drive format=raw,file=build/sapphireos.img -vga std -serial stdio
+qemu-system-i386 -drive format=raw,file=build/sapphireos.img -vga std -serial stdio -display gtk,zoom-to-fit=off,grab-on-hover=off
 ```
 
 Headless serial check:
@@ -38,11 +38,13 @@ If the video mode cannot be set, SapphireOS keeps the text shell and prints `VBE
 
 A menu bar sits on top and a dock sits along the bottom. File, Edit, View, and Window open menus. Red closes a window, yellow minimizes it, and green zooms it. Dock icons bring a window back. The clock is 12-hour.
 
-Move the mouse to move the cursor. Drag a window by its title bar. Click a window, or its dock icon, to raise it.
+Move the mouse to move the cursor. Drag a window by its title bar. Drag the bottom-right corner to resize. Click a window, or its dock icon, to raise it.
+
+File → New Terminal opens another Terminal (up to three). Each has its own buffer; typing goes to the frontmost Terminal. Closing hides a slot so New Terminal can reuse it. The dock restores the primary Terminal and About.
 
 The Terminal window runs the shell. Backspace deletes a character. Enter runs the line.
 
-`make run` keeps the QEMU window at the 800x600 aspect ratio (`-display gtk,zoom-to-fit=off`).
+`make run` shows the 800x600 framebuffer at 1:1 in a GTK window (`zoom-to-fit=off`), so the desktop stays 4:3. On-screen text is 8×8 pixels.
 
 ## Shell
 

@@ -1,33 +1,43 @@
-; 800x600 desktop. Compact menu bar and dock, 8px text, back buffer.
+; 800x600 desktop. Compact chrome, 8px text, resize, multi-terminal.
 
-MENU_H equ 22
+MENU_H equ 18
 TOP_H equ MENU_H
 BORDER equ 1
-TITLE_H equ 22
-PAD equ 6
+TITLE_H equ 18
+PAD equ 4
 FONT equ 8
-TERM_COLS equ 52
-TERM_ROWS equ 16
-WIN_COUNT equ 2
-DOCK_W equ 96
-DOCK_H equ 40
+TEXT_DY equ (TITLE_H - FONT) / 2
+TERM_COLS equ 48
+TERM_ROWS equ 14
+TERM_COUNT equ 3
+ABOUT_ID equ 3
+WIN_COUNT equ 4
+TERM_CELLS equ (TERM_COLS * TERM_ROWS)
+LINE_STRIDE equ 70
+DOCK_W equ 88
+DOCK_H equ 34
 DOCK_X equ (SCREEN_W - DOCK_W) / 2
-DOCK_Y equ SCREEN_H - 10 - DOCK_H
-ICON equ 28
-ICON_GAP equ 12
-ICON0_X equ DOCK_X + 14
+DOCK_Y equ SCREEN_H - 8 - DOCK_H
+ICON equ 24
+ICON_GAP equ 10
+ICON0_X equ DOCK_X + 12
 ICON1_X equ ICON0_X + ICON + ICON_GAP
-ICON_Y equ DOCK_Y + 6
+ICON_Y equ DOCK_Y + 4
 CUR_S equ 16
 BACK_BUFFER equ 0x100000
-BTN_R equ 5
-DROP_W equ 140
-DROP_H equ 18
-MENU_FILE_X equ 100
-MENU_EDIT_X equ 144
-MENU_VIEW_X equ 188
-MENU_WIN_X equ 236
-MENU_ITEM_W equ 40
+BTN_R equ 4
+DROP_W equ 132
+DROP_H equ 16
+MENU_FILE_X equ 92
+MENU_EDIT_X equ 132
+MENU_VIEW_X equ 172
+MENU_WIN_X equ 212
+MENU_ITEM_W equ 36
+MENU_WIN_W equ 52
+CLOCK_X equ (SCREEN_W - 12 - 8 * FONT)
+RESIZE_ZONE equ 12
+MIN_WIN_W equ 160
+MIN_WIN_H equ (TITLE_H + 48)
 
 TERM_W equ BORDER * 2 + PAD * 2 + TERM_COLS * FONT
 TERM_H equ BORDER * 2 + TITLE_H + PAD * 2 + TERM_ROWS * FONT
@@ -67,11 +77,17 @@ cursor_dirty db 0
 have_cursor db 0
 mouse_left db 0
 dragging db 0
+resizing db 0
 menu_open db 0
 align 4
 drag_id dd 0
 drag_dx dd 0
 drag_dy dd 0
+resize_id dd 0
+resize_ox dd 0
+resize_oy dd 0
+resize_ow dd 0
+resize_oh dd 0
 hit_id dd 0
 win_draw_id dd 0
 origin_x dd 0
@@ -80,6 +96,7 @@ term_fg dd 0
 cell_col dd 0
 cell_row dd 0
 btn_hit dd 0
+active_term dd 0
 
 col_desktop dd 0
 col_topbar dd 0
@@ -92,6 +109,7 @@ col_black dd 0
 col_ink dd 0
 col_menu dd 0
 col_menu_dim dd 0
+col_menu_hi dd 0
 col_dock dd 0
 col_shadow dd 0
 col_line dd 0
@@ -115,19 +133,19 @@ clock_str db "12:00 AM", 0
 clock_prev db "12:00 AM", 0
 vga_pal times 16 dd 0
 
-win_x dd 24, 470
-win_y dd 40, 70
-win_w dd TERM_W, 250
-win_h dd TERM_H, 140
-win_sx dd 24, 470
-win_sy dd 40, 70
-win_sw dd TERM_W, 250
-win_sh dd TERM_H, 140
-win_title dd title_term, title_about
-win_kind db 0, 1
-win_z db 1, 0
-win_vis db 1, 1
-win_zoom db 0, 0
+win_x dd 16, 36, 56, 420
+win_y dd 28, 48, 68, 48
+win_w dd TERM_W, TERM_W, TERM_W, 200
+win_h dd TERM_H, TERM_H, TERM_H, 110
+win_sx dd 16, 36, 56, 420
+win_sy dd 28, 48, 68, 48
+win_sw dd TERM_W, TERM_W, TERM_W, 200
+win_sh dd TERM_H, TERM_H, TERM_H, 110
+win_title dd title_term, title_term, title_term, title_about
+win_kind db 0, 0, 0, 1
+win_z db 1, 2, 3, 0
+win_vis db 1, 0, 0, 1
+win_zoom db 0, 0, 0, 0
 
 title_term db "Terminal", 0
 title_about db "About", 0
@@ -138,18 +156,22 @@ menu_view db "View", 0
 menu_window db "Window", 0
 item_new db "New Terminal", 0
 item_close db "Close Window", 0
-item_clear db "Clear Terminal", 0
+item_clear db "Clear", 0
+item_copy db "Copy", 0
+item_zoom db "Zoom", 0
 item_show db "Show All", 0
 about_l1 db "SapphireOS", 0
 about_l2 db "A small desktop.", 0
 about_l3 db "Drag a title bar.", 0
-about_l4 db "Click to raise.", 0
-about_l5 db "Use the dock.", 0
+about_l4 db "Resize at a corner.", 0
+about_l5 db "File opens terminals.", 0
 desktop_up_msg db "desktop up", 13, 10, 0
 
-term_buf times TERM_COLS * TERM_ROWS db ' '
-term_col dd 0
-term_row dd 0
+term_bufs times TERM_COUNT * TERM_CELLS db ' '
+term_col_arr times TERM_COUNT dd 0
+term_row_arr times TERM_COUNT dd 0
+term_lines times TERM_COUNT * LINE_STRIDE db 0
+term_llens times TERM_COUNT dd 0
 
 vga_rgb:
     db 28, 28, 30
@@ -183,8 +205,14 @@ desktop_main:
     mov byte [vga_attr], 0x0F
     call gui_init_colors
     call mouse_init
+    mov dword [active_term], 0
     call shell_init
     call read_clock
+    mov esi, clock_str
+    mov edi, clock_prev
+    mov ecx, 8
+    cld
+    rep movsb
     call desktop_redraw
     mov esi, desktop_up_msg
     call serial_puts
@@ -193,6 +221,7 @@ desktop_main:
     call kbuf_pop
     jc .nokey
     sti
+    call focus_front_term
     call shell_on_char
     jmp .check
 .nokey:
@@ -232,8 +261,21 @@ desktop_handle_mouse:
     mov [mouse_left], al
     test al, al
     jz .release
+    call hit_menubar
+    cmp eax, 0
+    je .not_bar
+    cmp al, [menu_open]
+    jne .open_menu
+    mov byte [menu_open], 0
+    jmp .menu_dirty
+.open_menu:
+    mov [menu_open], al
+.menu_dirty:
+    mov byte [content_dirty], 1
+    jmp .drag
+.not_bar:
     cmp byte [menu_open], 0
-    je .no_drop
+    je .no_menu
     call hit_dropdown
     cmp eax, 0
     jl .close_menu
@@ -244,13 +286,6 @@ desktop_handle_mouse:
 .close_menu:
     mov byte [menu_open], 0
     mov byte [content_dirty], 1
-.no_drop:
-    call hit_menubar
-    cmp eax, 0
-    je .no_menu
-    mov [menu_open], al
-    mov byte [content_dirty], 1
-    jmp .drag
 .no_menu:
     call hit_dock
     cmp eax, 0
@@ -258,6 +293,10 @@ desktop_handle_mouse:
     mov [hit_id], eax
     mov byte [win_vis + eax], 1
     call raise_window
+    cmp eax, TERM_COUNT
+    jae .dock_dirty
+    call set_active_term
+.dock_dirty:
     mov byte [content_dirty], 1
     jmp .drag
 .window:
@@ -266,12 +305,36 @@ desktop_handle_mouse:
     jl .drag
     mov [hit_id], eax
     call raise_window
+    cmp eax, TERM_COUNT
+    jae .win_raised
+    call set_active_term
+.win_raised:
     mov byte [content_dirty], 1
     mov eax, [hit_id]
     call hit_buttons
     cmp dword [btn_hit], 0
-    je .title
+    je .maybe_resize
     call do_button
+    jmp .drag
+.maybe_resize:
+    mov eax, [hit_id]
+    cmp byte [win_zoom + eax], 0
+    jne .title
+    call resize_hit
+    jc .title
+    mov byte [resizing], 1
+    mov eax, [hit_id]
+    mov [resize_id], eax
+    mov ebx, eax
+    shl ebx, 2
+    mov eax, [mouse_x]
+    mov [resize_ox], eax
+    mov eax, [mouse_y]
+    mov [resize_oy], eax
+    mov eax, [win_w + ebx]
+    mov [resize_ow], eax
+    mov eax, [win_h + ebx]
+    mov [resize_oh], eax
     jmp .drag
 .title:
     mov eax, [hit_id]
@@ -290,7 +353,55 @@ desktop_handle_mouse:
     jmp .drag
 .release:
     mov byte [dragging], 0
+    mov byte [resizing], 0
 .drag:
+    cmp byte [resizing], 0
+    je .maybe_move
+    cmp byte [mouse_moved], 0
+    je .out
+    mov eax, [resize_id]
+    mov ebx, eax
+    shl ebx, 2
+    mov eax, [mouse_x]
+    sub eax, [resize_ox]
+    add eax, [resize_ow]
+    cmp eax, MIN_WIN_W
+    jge .w_min
+    mov eax, MIN_WIN_W
+.w_min:
+    mov ecx, SCREEN_W
+    sub ecx, [win_x + ebx]
+    cmp eax, ecx
+    jle .w_max
+    mov eax, ecx
+.w_max:
+    cmp eax, MIN_WIN_W
+    jge .w_ok
+    mov eax, MIN_WIN_W
+.w_ok:
+    mov [win_w + ebx], eax
+    mov eax, [mouse_y]
+    sub eax, [resize_oy]
+    add eax, [resize_oh]
+    cmp eax, MIN_WIN_H
+    jge .h_min
+    mov eax, MIN_WIN_H
+.h_min:
+    mov ecx, DOCK_Y
+    sub ecx, [win_y + ebx]
+    cmp eax, ecx
+    jle .h_max
+    mov eax, ecx
+.h_max:
+    cmp eax, MIN_WIN_H
+    jge .h_ok
+    mov eax, MIN_WIN_H
+.h_ok:
+    mov [win_h + ebx], eax
+    call clamp_window
+    mov byte [content_dirty], 1
+    jmp .out
+.maybe_move:
     cmp byte [dragging], 0
     je .out
     cmp byte [mouse_moved], 0
@@ -309,6 +420,45 @@ desktop_handle_mouse:
 .out:
     mov byte [mouse_moved], 0
     popad
+    ret
+
+; EAX = window id. CF = 0 when pointer is in the bottom-right resize zone.
+resize_hit:
+    push ebx
+    push ecx
+    push edx
+    mov ebx, eax
+    shl ebx, 2
+    mov ecx, [win_x + ebx]
+    add ecx, [win_w + ebx]
+    sub ecx, RESIZE_ZONE
+    mov edx, [mouse_x]
+    cmp edx, ecx
+    jl .no
+    mov ecx, [win_x + ebx]
+    add ecx, [win_w + ebx]
+    cmp edx, ecx
+    jge .no
+    mov ecx, [win_y + ebx]
+    add ecx, [win_h + ebx]
+    sub ecx, RESIZE_ZONE
+    mov edx, [mouse_y]
+    cmp edx, ecx
+    jl .no
+    mov ecx, [win_y + ebx]
+    add ecx, [win_h + ebx]
+    cmp edx, ecx
+    jge .no
+    pop edx
+    pop ecx
+    pop ebx
+    clc
+    ret
+.no:
+    pop edx
+    pop ecx
+    pop ebx
+    stc
     ret
 
 ; EAX = window id, or -1.
@@ -371,7 +521,7 @@ hit_menubar:
     jl .view
     cmp ebx, MENU_WIN_X
     jl .none
-    cmp ebx, MENU_WIN_X + 56
+    cmp ebx, MENU_WIN_X + MENU_WIN_W
     jl .win
 .none:
     xor eax, eax
@@ -472,33 +622,161 @@ menu_action:
 .file:
     test eax, eax
     jnz .close
-    xor eax, eax
-    mov byte [win_vis], 1
-    call raise_window
+    call new_terminal
     jmp .done
 .close:
-    movzx eax, byte [win_z + WIN_COUNT - 1]
+    call front_visible
+    cmp eax, 0
+    jl .done
     mov byte [win_vis + eax], 0
     jmp .done
 .edit:
+    test eax, eax
+    jnz .done
+    call focus_front_term
     call term_clear
+    mov dword [line_len], 0
+    mov byte [line_buf], 0
+    call shell_prompt
     jmp .done
 .view:
-    mov byte [win_vis], 1
-    mov byte [win_vis + 1], 1
+    test eax, eax
+    jnz .showall
+    call front_visible
+    cmp eax, 0
+    jl .done
+    mov [hit_id], eax
+    mov dword [btn_hit], 3
+    call do_button
     jmp .done
+.showall:
+    mov ecx, WIN_COUNT
+.show:
+    dec ecx
+    js .done
+    mov byte [win_vis + ecx], 1
+    jmp .show
 .win:
     test eax, eax
     jnz .about
     xor eax, eax
     mov byte [win_vis], 1
     call raise_window
+    call set_active_term
     jmp .done
 .about:
-    mov eax, 1
-    mov byte [win_vis + 1], 1
+    mov eax, ABOUT_ID
+    mov byte [win_vis + ABOUT_ID], 1
     call raise_window
 .done:
+    popad
+    ret
+
+; Frontmost visible window, or EAX = -1.
+front_visible:
+    push ecx
+    mov ecx, WIN_COUNT
+.next:
+    dec ecx
+    js .none
+    movzx eax, byte [win_z + ecx]
+    cmp byte [win_vis + eax], 0
+    je .next
+    pop ecx
+    ret
+.none:
+    mov eax, -1
+    pop ecx
+    ret
+
+; Make the frontmost visible terminal the active I/O target.
+focus_front_term:
+    push eax
+    push ecx
+    mov ecx, WIN_COUNT
+.next:
+    dec ecx
+    js .out
+    movzx eax, byte [win_z + ecx]
+    cmp eax, TERM_COUNT
+    jae .next
+    cmp byte [win_vis + eax], 0
+    je .next
+    call set_active_term
+.out:
+    pop ecx
+    pop eax
+    ret
+
+; EAX = terminal id. Saves the previous line buffer and loads this one.
+set_active_term:
+    pushad
+    cmp eax, TERM_COUNT
+    jae .out
+    cmp eax, [active_term]
+    je .out
+    mov ebx, [active_term]
+    mov ecx, [line_len]
+    mov [term_llens + ebx * 4], ecx
+    imul ebx, LINE_STRIDE
+    mov esi, line_buf
+    lea edi, [term_lines + ebx]
+    mov ecx, LINE_STRIDE
+    cld
+    rep movsb
+    mov [active_term], eax
+    mov ebx, eax
+    mov ecx, [term_llens + ebx * 4]
+    mov [line_len], ecx
+    imul ebx, LINE_STRIDE
+    lea esi, [term_lines + ebx]
+    mov edi, line_buf
+    mov ecx, LINE_STRIDE
+    rep movsb
+.out:
+    popad
+    ret
+
+; Open another Terminal window from the pool.
+new_terminal:
+    pushad
+    xor ecx, ecx
+.find:
+    cmp ecx, TERM_COUNT
+    jae .reuse
+    cmp byte [win_vis + ecx], 0
+    je .found
+    inc ecx
+    jmp .find
+.reuse:
+    mov ecx, 1
+    cmp dword [active_term], 1
+    jne .found
+    mov ecx, 2
+.found:
+    mov eax, ecx
+    mov byte [win_vis + eax], 1
+    mov byte [win_zoom + eax], 0
+    mov ebx, eax
+    shl ebx, 2
+    mov edx, eax
+    imul edx, 20
+    add edx, 24
+    mov [win_x + ebx], edx
+    mov edx, eax
+    imul edx, 18
+    add edx, 30
+    mov [win_y + ebx], edx
+    mov dword [win_w + ebx], TERM_W
+    mov dword [win_h + ebx], TERM_H
+    call clamp_window
+    call raise_window
+    call set_active_term
+    call term_clear
+    mov dword [line_len], 0
+    mov byte [line_buf], 0
+    call shell_prompt
+    mov byte [content_dirty], 1
     popad
     ret
 
@@ -519,7 +797,7 @@ hit_buttons:
     cmp edx, BTN_R
     jg .no
     mov ecx, [win_x + ebx]
-    add ecx, 14
+    add ecx, 12
     mov edx, [mouse_x]
     sub edx, ecx
     cmp edx, -BTN_R
@@ -529,7 +807,7 @@ hit_buttons:
     mov dword [btn_hit], 1
     jmp .no
 .try_y:
-    add ecx, 16
+    add ecx, 14
     mov edx, [mouse_x]
     sub edx, ecx
     cmp edx, -BTN_R
@@ -539,7 +817,7 @@ hit_buttons:
     mov dword [btn_hit], 2
     jmp .no
 .try_g:
-    add ecx, 16
+    add ecx, 14
     mov edx, [mouse_x]
     sub edx, ecx
     cmp edx, -BTN_R
@@ -585,10 +863,11 @@ do_button:
     mov [win_sw + ebx], ecx
     mov ecx, [win_h + ebx]
     mov [win_sh + ebx], ecx
-    mov dword [win_x + ebx], 8
-    mov dword [win_y + ebx], TOP_H + 4
-    mov dword [win_w + ebx], SCREEN_W - 16
-    mov ecx, DOCK_Y - TOP_H - 12
+    mov dword [win_x + ebx], 0
+    mov dword [win_y + ebx], MENU_H
+    mov dword [win_w + ebx], SCREEN_W
+    mov ecx, DOCK_Y
+    sub ecx, MENU_H
     mov [win_h + ebx], ecx
     mov byte [win_zoom + eax], 1
     mov byte [content_dirty], 1
@@ -674,6 +953,29 @@ raise_window:
 clamp_window:
     push eax
     push ecx
+    mov eax, [win_w + ebx]
+    cmp eax, MIN_WIN_W
+    jge .w_lo
+    mov eax, MIN_WIN_W
+    mov [win_w + ebx], eax
+.w_lo:
+    mov ecx, SCREEN_W
+    cmp eax, ecx
+    jle .w_hi
+    mov [win_w + ebx], ecx
+.w_hi:
+    mov eax, [win_h + ebx]
+    cmp eax, MIN_WIN_H
+    jge .h_lo
+    mov eax, MIN_WIN_H
+    mov [win_h + ebx], eax
+.h_lo:
+    mov ecx, DOCK_Y
+    sub ecx, TOP_H
+    cmp eax, ecx
+    jle .h_hi
+    mov [win_h + ebx], ecx
+.h_hi:
     mov eax, [win_x + ebx]
     cmp eax, 0
     jge .x_lo
@@ -691,7 +993,7 @@ clamp_window:
     jge .y_lo
     mov eax, TOP_H
 .y_lo:
-    mov ecx, DOCK_Y - 8
+    mov ecx, DOCK_Y
     sub ecx, [win_h + ebx]
     cmp ecx, TOP_H
     jge .y_lim
@@ -799,14 +1101,30 @@ draw_menu:
     push edx
     push esi
     FILL 0, 0, SCREEN_W, MENU_H, [col_menu]
-    mov eax, 8
-    mov ebx, 7
+    cmp byte [menu_open], 1
+    jne .hf
+    FILL MENU_FILE_X, 0, MENU_ITEM_W, MENU_H, [col_menu_hi]
+.hf:
+    cmp byte [menu_open], 2
+    jne .he
+    FILL MENU_EDIT_X, 0, MENU_ITEM_W, MENU_H, [col_menu_hi]
+.he:
+    cmp byte [menu_open], 3
+    jne .hv
+    FILL MENU_VIEW_X, 0, MENU_ITEM_W, MENU_H, [col_menu_hi]
+.hv:
+    cmp byte [menu_open], 4
+    jne .hw
+    FILL MENU_WIN_X, 0, MENU_WIN_W, MENU_H, [col_menu_hi]
+.hw:
+    mov eax, 6
+    mov ebx, TEXT_DY
     mov esi, bar_title
     mov edx, [col_white]
     mov ecx, -1
     call draw_string
-    mov eax, MENU_FILE_X
-    mov ebx, 7
+    mov eax, MENU_FILE_X + 2
+    mov ebx, TEXT_DY
     mov esi, menu_file
     mov edx, [col_menu_dim]
     cmp byte [menu_open], 1
@@ -815,7 +1133,7 @@ draw_menu:
 .f:
     mov ecx, -1
     call draw_string
-    mov eax, MENU_EDIT_X
+    mov eax, MENU_EDIT_X + 2
     mov esi, menu_edit
     mov edx, [col_menu_dim]
     cmp byte [menu_open], 2
@@ -823,7 +1141,7 @@ draw_menu:
     mov edx, [col_white]
 .e:
     call draw_string
-    mov eax, MENU_VIEW_X
+    mov eax, MENU_VIEW_X + 2
     mov esi, menu_view
     mov edx, [col_menu_dim]
     cmp byte [menu_open], 3
@@ -831,7 +1149,7 @@ draw_menu:
     mov edx, [col_white]
 .v:
     call draw_string
-    mov eax, MENU_WIN_X
+    mov eax, MENU_WIN_X + 2
     mov esi, menu_window
     mov edx, [col_menu_dim]
     cmp byte [menu_open], 4
@@ -839,8 +1157,8 @@ draw_menu:
     mov edx, [col_white]
 .w:
     call draw_string
-    mov eax, 720
-    mov ebx, 7
+    mov eax, CLOCK_X
+    mov ebx, TEXT_DY
     mov esi, clock_str
     mov edx, [col_white]
     mov ecx, -1
@@ -877,28 +1195,28 @@ draw_dropdown:
     jmp .items
 .edit:
     mov esi, item_clear
-    mov edi, item_clear
+    mov edi, item_copy
     jmp .items
 .view:
-    mov esi, item_show
+    mov esi, item_zoom
     mov edi, item_show
 .items:
     mov eax, [origin_x]
     add eax, 8
     mov ebx, [origin_y]
-    add ebx, 5
+    add ebx, 2
     mov edx, [col_ink]
     mov ecx, -1
     call draw_string
-    cmp byte [menu_open], 2
-    je .out
-    cmp byte [menu_open], 3
-    je .out
     mov esi, edi
     mov eax, [origin_x]
     add eax, 8
     mov ebx, [origin_y]
-    add ebx, DROP_H + 5
+    add ebx, DROP_H + 2
+    cmp byte [menu_open], 2
+    jne .ink2
+    mov edx, [col_menu_dim]
+.ink2:
     call draw_string
 .out:
     popad
@@ -915,17 +1233,17 @@ draw_dock:
     cmp ecx, DOCK_H
     jge .icons
     xor eax, eax
-    cmp ecx, 8
+    cmp ecx, 6
     jge .bot
-    mov eax, 8
+    mov eax, 6
     sub eax, ecx
     jmp .fill
 .bot:
     mov ebx, DOCK_H
     sub ebx, ecx
-    cmp ebx, 8
+    cmp ebx, 6
     jge .fill
-    mov eax, 8
+    mov eax, 6
     sub eax, ebx
 .fill:
     mov edx, DOCK_W
@@ -940,26 +1258,31 @@ draw_dock:
     jmp .row
 .icons:
     FILL ICON0_X, ICON_Y, ICON, ICON, [col_icon_term]
-    FILL ICON0_X + 5, ICON_Y + 5, ICON - 10, ICON - 12, [col_black]
-    FILL ICON0_X + 7, ICON_Y + ICON - 8, ICON - 14, 3, [col_green]
+    FILL ICON0_X + 3, ICON_Y + 4, 18, 14, [col_black]
+    FILL ICON0_X + 5, ICON_Y + 6, 2, 2, [col_green]
+    FILL ICON0_X + 7, ICON_Y + 8, 2, 2, [col_green]
+    FILL ICON0_X + 9, ICON_Y + 10, 2, 2, [col_green]
+    FILL ICON0_X + 7, ICON_Y + 12, 2, 2, [col_green]
+    FILL ICON0_X + 5, ICON_Y + 14, 2, 2, [col_green]
+    FILL ICON0_X + 12, ICON_Y + 14, 6, 2, [col_green]
     FILL ICON1_X, ICON_Y, ICON, ICON, [col_icon_about]
     mov eax, ICON1_X + ICON / 2
     mov ebx, ICON_Y + ICON / 2
-    mov ecx, 7
+    mov ecx, 6
     mov edx, [col_white]
     call draw_disc
     mov eax, ICON1_X + ICON / 2 - 1
-    mov ebx, ICON_Y + 8
-    FILL eax, ebx, 3, 3, [col_icon_about]
-    add ebx, 5
-    FILL eax, ebx, 3, 8, [col_icon_about]
+    mov ebx, ICON_Y + 7
+    FILL eax, ebx, 2, 2, [col_icon_about]
+    add ebx, 4
+    FILL eax, ebx, 2, 7, [col_icon_about]
     cmp byte [win_vis], 0
     je .about_dot
-    FILL ICON0_X + 10, ICON_Y + ICON + 2, 8, 2, [col_white]
+    FILL ICON0_X + 8, ICON_Y + ICON + 1, 8, 2, [col_white]
 .about_dot:
-    cmp byte [win_vis + 1], 0
+    cmp byte [win_vis + ABOUT_ID], 0
     je .done_icons
-    FILL ICON1_X + 10, ICON_Y + ICON + 2, 8, 2, [col_white]
+    FILL ICON1_X + 8, ICON_Y + ICON + 1, 8, 2, [col_white]
 .done_icons:
     pop esi
     pop edx
@@ -968,7 +1291,7 @@ draw_dock:
     pop eax
     ret
 
-; EAX = 0 or 1 when the pointer is on a dock icon, else -1.
+; EAX = primary Terminal or About id when on a dock icon, else -1.
 hit_dock:
     push ebx
     mov ebx, [mouse_y]
@@ -997,7 +1320,7 @@ hit_dock:
     pop ebx
     ret
 .about:
-    mov eax, 1
+    mov eax, ABOUT_ID
     pop ebx
     ret
 
@@ -1009,11 +1332,11 @@ draw_window:
     shl ebx, 2
 
     mov eax, [win_x + ebx]
-    sub eax, 6
+    sub eax, 4
     mov ecx, [win_y + ebx]
-    add ecx, 8
+    add ecx, 6
     mov edx, [win_w + ebx]
-    add edx, 12
+    add edx, 8
     mov esi, [win_h + ebx]
     sub esi, 4
     FILL eax, ecx, edx, esi, [col_shadow]
@@ -1055,7 +1378,7 @@ draw_window:
     call draw_about
 .chrome:
     mov eax, [win_x + ebx]
-    add eax, 14
+    add eax, 12
     mov ecx, [win_y + ebx]
     add ecx, TITLE_H / 2
     mov edx, [col_red]
@@ -1063,19 +1386,19 @@ draw_window:
     mov ebx, ecx
     mov ecx, BTN_R
     call draw_disc
-    add eax, 16
+    add eax, 14
     mov edx, [col_yellow]
     call draw_disc
-    add eax, 16
+    add eax, 14
     mov edx, [col_green]
     call draw_disc
     pop ebx
 
     mov esi, [win_title + ebx]
     mov eax, [win_x + ebx]
-    add eax, 62
+    add eax, 52
     mov ecx, [win_y + ebx]
-    add ecx, 7
+    add ecx, TEXT_DY
     mov edx, [col_ink]
     push eax
     mov al, [win_draw_id]
@@ -1172,6 +1495,10 @@ draw_terminal:
     mov eax, [vga_pal + eax * 4]
     mov [term_fg], eax
 
+    mov eax, [win_draw_id]
+    imul eax, TERM_CELLS
+    lea esi, [term_bufs + eax]
+
     xor ecx, ecx
 .row:
     cmp ecx, TERM_ROWS
@@ -1183,7 +1510,7 @@ draw_terminal:
     mov eax, ecx
     imul eax, TERM_COLS
     add eax, ebx
-    movzx eax, byte [term_buf + eax]
+    movzx eax, byte [esi + eax]
     cmp al, ' '
     je .next_col
     mov [cell_col], ebx
@@ -1196,6 +1523,7 @@ draw_terminal:
     imul edx, FONT
     add edx, [origin_y]
     mov ebx, edx
+    push esi
     push dword -1
     push dword [term_fg]
     push edi
@@ -1203,6 +1531,7 @@ draw_terminal:
     push eax
     call draw_char
     add esp, 20
+    pop esi
     mov ebx, [cell_col]
     mov ecx, [cell_row]
 .next_col:
@@ -1217,24 +1546,28 @@ draw_terminal:
 
 draw_about:
     pushad
-    mov eax, [win_x + 4]
-    add eax, BORDER + PAD
-    mov ebx, [win_y + 4]
-    add ebx, TITLE_H + PAD
+    mov eax, [win_draw_id]
+    shl eax, 2
+    mov ebx, [win_x + eax]
+    add ebx, BORDER + PAD
+    mov ecx, [win_y + eax]
+    add ecx, TITLE_H + PAD
+    mov eax, ebx
+    mov ebx, ecx
     mov edx, [col_ink]
     mov ecx, -1
     mov esi, about_l1
     call draw_string
-    add ebx, 12
+    add ebx, 18
     mov esi, about_l2
     call draw_string
-    add ebx, 14
+    add ebx, 18
     mov esi, about_l3
     call draw_string
-    add ebx, 12
+    add ebx, 18
     mov esi, about_l4
     call draw_string
-    add ebx, 12
+    add ebx, 18
     mov esi, about_l5
     call draw_string
     popad
@@ -1329,6 +1662,7 @@ draw_string:
     ret
 
 ; Stack: x, y, character, foreground, background.
+; 1:1 8x8 glyphs. Bit 0 of each font row is the leftmost pixel.
 draw_char:
     pushad
     mov ebp, esp
@@ -1752,6 +2086,7 @@ gui_init_colors:
     COLOR col_ink, 28, 28, 30
     COLOR col_menu, 32, 32, 34
     COLOR col_menu_dim, 176, 176, 184
+    COLOR col_menu_hi, 70, 70, 78
     COLOR col_dock, 46, 46, 50
     COLOR col_shadow, 10, 22, 40
     COLOR col_line, 198, 198, 204
@@ -1867,17 +2202,28 @@ con_put_hex8:
     pop eax
     ret
 
+; Active terminal buffer helpers.
+; Sets EDI to the active terminal buffer. Preserves EAX (character in AL).
+term_active_buf:
+    push eax
+    mov eax, [active_term]
+    imul eax, TERM_CELLS
+    lea edi, [term_bufs + eax]
+    pop eax
+    ret
+
 term_clear:
     push eax
     push ecx
     push edi
-    mov edi, term_buf
-    mov ecx, TERM_COLS * TERM_ROWS
+    call term_active_buf
+    mov ecx, TERM_CELLS
     mov al, ' '
     cld
     rep stosb
-    mov dword [term_col], 0
-    mov dword [term_row], 0
+    mov eax, [active_term]
+    mov dword [term_col_arr + eax * 4], 0
+    mov dword [term_row_arr + eax * 4], 0
     mov byte [content_dirty], 1
     pop edi
     pop ecx
@@ -1887,49 +2233,64 @@ term_clear:
 term_putc:
     push eax
     push ebx
+    push ecx
+    push edi
     cmp al, 13
     je .out
     cmp al, 10
     je .nl
-    mov ebx, [term_row]
-    imul ebx, TERM_COLS
-    add ebx, [term_col]
-    mov [term_buf + ebx], al
-    inc dword [term_col]
-    cmp dword [term_col], TERM_COLS
+    call term_active_buf
+    mov ebx, [active_term]
+    mov ecx, [term_row_arr + ebx * 4]
+    imul ecx, TERM_COLS
+    add ecx, [term_col_arr + ebx * 4]
+    mov [edi + ecx], al
+    inc dword [term_col_arr + ebx * 4]
+    cmp dword [term_col_arr + ebx * 4], TERM_COLS
     jb .mark
 .nl:
-    mov dword [term_col], 0
-    inc dword [term_row]
-    cmp dword [term_row], TERM_ROWS
+    mov ebx, [active_term]
+    mov dword [term_col_arr + ebx * 4], 0
+    inc dword [term_row_arr + ebx * 4]
+    cmp dword [term_row_arr + ebx * 4], TERM_ROWS
     jb .mark
     call term_scroll
-    mov dword [term_row], TERM_ROWS - 1
+    mov ebx, [active_term]
+    mov dword [term_row_arr + ebx * 4], TERM_ROWS - 1
 .mark:
     mov byte [content_dirty], 1
 .out:
+    pop edi
+    pop ecx
     pop ebx
     pop eax
     ret
 
 term_backspace:
     push ebx
-    cmp dword [term_col], 0
+    push ecx
+    push edi
+    mov ebx, [active_term]
+    cmp dword [term_col_arr + ebx * 4], 0
     jne .left
-    cmp dword [term_row], 0
+    cmp dword [term_row_arr + ebx * 4], 0
     je .out
-    dec dword [term_row]
-    mov dword [term_col], TERM_COLS - 1
+    dec dword [term_row_arr + ebx * 4]
+    mov dword [term_col_arr + ebx * 4], TERM_COLS - 1
     jmp .wipe
 .left:
-    dec dword [term_col]
+    dec dword [term_col_arr + ebx * 4]
 .wipe:
-    mov ebx, [term_row]
-    imul ebx, TERM_COLS
-    add ebx, [term_col]
-    mov byte [term_buf + ebx], ' '
+    call term_active_buf
+    mov ebx, [active_term]
+    mov ecx, [term_row_arr + ebx * 4]
+    imul ecx, TERM_COLS
+    add ecx, [term_col_arr + ebx * 4]
+    mov byte [edi + ecx], ' '
     mov byte [content_dirty], 1
 .out:
+    pop edi
+    pop ecx
     pop ebx
     ret
 
@@ -1939,11 +2300,13 @@ term_recolor:
 
 term_scroll:
     push eax
+    push ebx
     push ecx
     push esi
     push edi
-    mov esi, term_buf + TERM_COLS
-    mov edi, term_buf
+    call term_active_buf
+    mov esi, edi
+    add esi, TERM_COLS
     mov ecx, TERM_COLS * (TERM_ROWS - 1)
     cld
     rep movsb
@@ -1953,5 +2316,6 @@ term_scroll:
     pop edi
     pop esi
     pop ecx
+    pop ebx
     pop eax
     ret
