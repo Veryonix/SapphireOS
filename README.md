@@ -36,9 +36,13 @@ If the video mode cannot be set, SapphireOS keeps the text shell and prints `VBE
 
 ## Desktop
 
-A menu bar sits on top and a dock sits along the bottom. Text is 16 pixels. Move the mouse to move the cursor. Drag a window by its title bar. Click a window, or its dock icon, to raise it.
+A menu bar sits on top and a dock sits along the bottom. File, Edit, View, and Window open menus. Red closes a window, yellow minimizes it, and green zooms it. Dock icons bring a window back. The clock is 12-hour.
+
+Move the mouse to move the cursor. Drag a window by its title bar. Click a window, or its dock icon, to raise it.
 
 The Terminal window runs the shell. Backspace deletes a character. Enter runs the line.
+
+`make run` keeps the QEMU window at the 800x600 aspect ratio (`-display gtk,zoom-to-fit=off`).
 
 ## Shell
 
