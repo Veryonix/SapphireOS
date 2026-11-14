@@ -1,13 +1,26 @@
-; 800x600 desktop: sapphire background, top bar, draggable windows, terminal.
+; 800x600 desktop. Menu bar and dock, 16px text, back buffer so the
+; pointer can move without redrawing the whole screen.
 
-TOP_H equ 32
-BORDER equ 2
-TITLE_H equ 24
-PAD equ 4
-FONT equ 8
-TERM_COLS equ 48
-TERM_ROWS equ 20
+MENU_H equ 28
+TOP_H equ MENU_H
+BORDER equ 1
+TITLE_H equ 32
+PAD equ 10
+FONT equ 16
+TERM_COLS equ 38
+TERM_ROWS equ 11
 WIN_COUNT equ 2
+DOCK_W equ 130
+DOCK_H equ 56
+DOCK_X equ (SCREEN_W - DOCK_W) / 2
+DOCK_Y equ SCREEN_H - 16 - DOCK_H
+ICON equ 36
+ICON_GAP equ 18
+ICON0_X equ DOCK_X + 20
+ICON1_X equ ICON0_X + ICON + ICON_GAP
+ICON_Y equ DOCK_Y + 8
+CUR_S equ 20
+BACK_BUFFER equ 0x100000
 
 TERM_W equ BORDER * 2 + PAD * 2 + TERM_COLS * FONT
 TERM_H equ BORDER * 2 + TITLE_H + PAD * 2 + TERM_ROWS * FONT
@@ -34,12 +47,17 @@ vbe_ok db 0
 vbe_mode dw 0
 align 4
 fb_ptr dd 0
+fb_front dd 0
+fb_back dd 0
+fb_target dd 0
 fb_pitch dd 0
 fb_rpos db 0
 fb_gpos db 0
 fb_bpos db 0
 
-dirty db 0
+content_dirty db 0
+cursor_dirty db 0
+have_cursor db 0
 mouse_left db 0
 dragging db 0
 align 4
@@ -63,12 +81,34 @@ col_border dd 0
 col_white dd 0
 col_black dd 0
 col_ink dd 0
+col_menu dd 0
+col_menu_dim dd 0
+col_dock dd 0
+col_shadow dd 0
+col_line dd 0
+col_red dd 0
+col_yellow dd 0
+col_green dd 0
+col_icon_term dd 0
+col_icon_about dd 0
+timer_ticks dd 0
+clock_stamp dd 0
+cur_x dd 0
+cur_y dd 0
+cur_w dd 0
+cur_h dd 0
+disc_cx dd 0
+disc_cy dd 0
+disc_r dd 0
+disc_col dd 0
+cursor_bg times CUR_S * CUR_S dd 0
+clock_str db "00:00", 0
 vga_pal times 16 dd 0
 
-win_x dd 24, 448
-win_y dd 52, 84
-win_w dd TERM_W, 260
-win_h dd TERM_H, 160
+win_x dd 16, 430
+win_y dd 44, 300
+win_w dd TERM_W, 340
+win_h dd TERM_H, 200
 win_title dd title_term, title_about
 win_kind db 0, 1
 win_z db 1, 0
@@ -76,10 +116,15 @@ win_z db 1, 0
 title_term db "Terminal", 0
 title_about db "About", 0
 bar_title db "SapphireOS", 0
-about_l1 db "SapphireOS v0.1", 0
-about_l2 db "800x600, 32-bit", 0
+menu_file db "File", 0
+menu_edit db "Edit", 0
+menu_view db "View", 0
+menu_window db "Window", 0
+about_l1 db "SapphireOS", 0
+about_l2 db "A small desktop.", 0
 about_l3 db "Drag a title bar.", 0
 about_l4 db "Click to raise.", 0
+about_l5 db "Use the dock.", 0
 desktop_up_msg db "desktop up", 13, 10, 0
 
 term_buf times TERM_COLS * TERM_ROWS db ' '
@@ -87,7 +132,7 @@ term_col dd 0
 term_row dd 0
 
 vga_rgb:
-    db 0, 0, 0
+    db 28, 28, 30
     db 0, 0, 170
     db 0, 170, 0
     db 0, 170, 170
@@ -111,9 +156,15 @@ cursor_glyph:
     dw 0x0700, 0x0300, 0x0000, 0x0000
 
 desktop_main:
+    mov eax, [fb_ptr]
+    mov [fb_front], eax
+    mov dword [fb_back], BACK_BUFFER
+    mov dword [fb_target], BACK_BUFFER
+    mov byte [vga_attr], 0x0F
     call gui_init_colors
     call mouse_init
     call shell_init
+    call read_clock
     call desktop_redraw
     mov esi, desktop_up_msg
     call serial_puts
@@ -128,13 +179,22 @@ desktop_main:
     sti
 .check:
     call desktop_handle_mouse
-    cmp byte [dirty], 0
-    je .wait
+    call clock_poll
+    cmp byte [content_dirty], 0
+    je .cursor
     call desktop_redraw
+    jmp .loop
+.cursor:
+    cmp byte [cursor_dirty], 0
+    je .wait
+    call move_cursor
+    mov byte [cursor_dirty], 0
     jmp .loop
 .wait:
     cli
-    cmp byte [dirty], 0
+    cmp byte [content_dirty], 0
+    jne .loop
+    cmp byte [cursor_dirty], 0
     jne .loop
     mov eax, [k_head]
     cmp eax, [k_tail]
@@ -152,12 +212,20 @@ desktop_handle_mouse:
     mov [mouse_left], al
     test al, al
     jz .release
+    call hit_dock
+    cmp eax, 0
+    jl .window
+    mov [hit_id], eax
+    call raise_window
+    mov byte [content_dirty], 1
+    jmp .drag
+.window:
     call hit_test
     cmp eax, 0
     jl .drag
     mov [hit_id], eax
     call raise_window
-    mov byte [dirty], 1
+    mov byte [content_dirty], 1
     mov eax, [hit_id]
     call title_hit
     jc .drag
@@ -189,7 +257,7 @@ desktop_handle_mouse:
     sub eax, [drag_dy]
     mov [win_y + ebx], eax
     call clamp_window
-    mov byte [dirty], 1
+    mov byte [content_dirty], 1
 .out:
     mov byte [mouse_moved], 0
     popad
@@ -315,8 +383,12 @@ clamp_window:
     jge .y_lo
     mov eax, TOP_H
 .y_lo:
-    mov ecx, SCREEN_H
+    mov ecx, DOCK_Y - 8
     sub ecx, [win_h + ebx]
+    cmp ecx, TOP_H
+    jge .y_lim
+    mov ecx, TOP_H
+.y_lim:
     cmp eax, ecx
     jle .y_hi
     mov eax, ecx
@@ -328,31 +400,232 @@ clamp_window:
 
 desktop_redraw:
     pushad
-    cmp dword [fb_ptr], 0
+    cmp dword [fb_front], 0
     je .out
-    mov byte [dirty], 0
-    FILL 0, 0, SCREEN_W, SCREEN_H, [col_desktop]
-    FILL 0, 0, SCREEN_W, TOP_H, [col_topbar]
-    mov eax, 16
-    mov ebx, 12
-    mov esi, bar_title
-    mov edx, [col_white]
-    mov ecx, -1
-    call draw_string
+    mov eax, [fb_back]
+    mov [fb_target], eax
+    mov byte [content_dirty], 0
+    mov byte [cursor_dirty], 0
+    call draw_wallpaper
+    call draw_menu
     xor ecx, ecx
 .wins:
     cmp ecx, WIN_COUNT
-    jae .cursor
+    jae .dock
     movzx eax, byte [win_z + ecx]
     push ecx
     call draw_window
     pop ecx
     inc ecx
     jmp .wins
-.cursor:
-    call draw_cursor
+.dock:
+    call draw_dock
+    call present
+    mov byte [have_cursor], 0
+    call move_cursor
 .out:
     popad
+    ret
+
+draw_wallpaper:
+    push eax
+    push ebx
+    push ecx
+    push edx
+    xor ecx, ecx
+.row:
+    cmp ecx, SCREEN_H
+    jge .done
+    mov eax, ecx
+    imul eax, 54
+    xor edx, edx
+    mov ebx, SCREEN_H
+    div ebx
+    mov ebx, 78
+    sub ebx, eax
+    mov [wall_r], bl
+    mov eax, ecx
+    imul eax, 96
+    xor edx, edx
+    mov ebx, SCREEN_H
+    div ebx
+    mov ebx, 156
+    sub ebx, eax
+    mov [wall_g], bl
+    mov eax, ecx
+    imul eax, 100
+    xor edx, edx
+    mov ebx, SCREEN_H
+    div ebx
+    mov ebx, 214
+    sub ebx, eax
+    mov [wall_b], bl
+    mov al, [wall_r]
+    mov ah, [wall_g]
+    mov bl, [wall_b]
+    push ecx
+    call pack_rgb
+    pop ecx
+    FILL 0, ecx, SCREEN_W, 1, eax
+    inc ecx
+    jmp .row
+.done:
+    pop edx
+    pop ecx
+    pop ebx
+    pop eax
+    ret
+
+wall_r db 0
+wall_g db 0
+wall_b db 0
+
+draw_menu:
+    push eax
+    push ebx
+    push ecx
+    push edx
+    push esi
+    FILL 0, 0, SCREEN_W, MENU_H, [col_menu]
+    mov eax, 14
+    mov ebx, 6
+    mov esi, bar_title
+    mov edx, [col_white]
+    mov ecx, -1
+    call draw_string
+    movzx eax, byte [win_z + WIN_COUNT - 1]
+    shl eax, 2
+    mov esi, [win_title + eax]
+    mov eax, 188
+    mov ebx, 6
+    mov edx, [col_white]
+    mov ecx, -1
+    call draw_string
+    mov eax, 340
+    mov ebx, 6
+    mov esi, menu_file
+    mov edx, [col_menu_dim]
+    mov ecx, -1
+    call draw_string
+    mov eax, 420
+    mov esi, menu_edit
+    call draw_string
+    mov eax, 500
+    mov esi, menu_view
+    call draw_string
+    mov eax, 580
+    mov esi, menu_window
+    call draw_string
+    mov eax, 704
+    mov ebx, 6
+    mov esi, clock_str
+    mov edx, [col_white]
+    mov ecx, -1
+    call draw_string
+    pop esi
+    pop edx
+    pop ecx
+    pop ebx
+    pop eax
+    ret
+
+draw_dock:
+    push eax
+    push ebx
+    push ecx
+    push edx
+    push esi
+    xor ecx, ecx
+.row:
+    cmp ecx, DOCK_H
+    jge .icons
+    xor eax, eax
+    cmp ecx, 8
+    jge .bot
+    mov eax, 8
+    sub eax, ecx
+    jmp .fill
+.bot:
+    mov ebx, DOCK_H
+    sub ebx, ecx
+    cmp ebx, 8
+    jge .fill
+    mov eax, 8
+    sub eax, ebx
+.fill:
+    mov edx, DOCK_W
+    sub edx, eax
+    sub edx, eax
+    mov esi, DOCK_X
+    add esi, eax
+    mov ebx, DOCK_Y
+    add ebx, ecx
+    FILL esi, ebx, edx, 1, [col_dock]
+    inc ecx
+    jmp .row
+.icons:
+    FILL ICON0_X, ICON_Y, ICON, ICON, [col_icon_term]
+    mov eax, ICON0_X + 10
+    mov ebx, ICON_Y + 10
+    mov esi, dock_prompt
+    mov edx, [col_green]
+    mov ecx, -1
+    call draw_string
+    FILL ICON1_X, ICON_Y, ICON, ICON, [col_icon_about]
+    mov eax, ICON1_X + 12
+    mov ebx, ICON_Y + 10
+    mov esi, dock_info
+    mov edx, [col_white]
+    mov ecx, -1
+    call draw_string
+    movzx eax, byte [win_z + WIN_COUNT - 1]
+    mov ebx, ICON0_X + 14
+    test eax, eax
+    jz .dot
+    mov ebx, ICON1_X + 14
+.dot:
+    FILL ebx, ICON_Y + ICON + 4, 8, 3, [col_white]
+    pop esi
+    pop edx
+    pop ecx
+    pop ebx
+    pop eax
+    ret
+
+dock_prompt db ">", 0
+dock_info db "i", 0
+
+; EAX = 0 or 1 when the pointer is on a dock icon, else -1.
+hit_dock:
+    push ebx
+    mov ebx, [mouse_y]
+    cmp ebx, ICON_Y
+    jl .no
+    mov eax, ICON_Y + ICON
+    cmp ebx, eax
+    jge .no
+    mov ebx, [mouse_x]
+    cmp ebx, ICON0_X
+    jl .no
+    mov eax, ICON0_X + ICON
+    cmp ebx, eax
+    jl .term
+    cmp ebx, ICON1_X
+    jl .no
+    mov eax, ICON1_X + ICON
+    cmp ebx, eax
+    jl .about
+.no:
+    mov eax, -1
+    pop ebx
+    ret
+.term:
+    xor eax, eax
+    pop ebx
+    ret
+.about:
+    mov eax, 1
+    pop ebx
     ret
 
 ; EAX = window id.
@@ -361,7 +634,36 @@ draw_window:
     mov [win_draw_id], eax
     mov ebx, eax
     shl ebx, 2
+
+    mov eax, [win_x + ebx]
+    sub eax, 6
+    mov ecx, [win_y + ebx]
+    add ecx, 8
+    mov edx, [win_w + ebx]
+    add edx, 12
+    mov esi, [win_h + ebx]
+    sub esi, 4
+    FILL eax, ecx, edx, esi, [col_shadow]
+
     FILL [win_x + ebx], [win_y + ebx], [win_w + ebx], [win_h + ebx], [col_border]
+
+    mov eax, [win_x + ebx]
+    add eax, BORDER
+    mov ecx, [win_y + ebx]
+    add ecx, BORDER
+    mov edx, [win_w + ebx]
+    sub edx, BORDER * 2
+    mov esi, [win_h + ebx]
+    sub esi, BORDER * 2
+    mov edi, [col_title_dim]
+    push eax
+    mov al, [win_z + WIN_COUNT - 1]
+    cmp al, [win_draw_id]
+    pop eax
+    jne .body
+    mov edi, [col_win]
+.body:
+    FILL eax, ecx, edx, esi, edi
 
     mov eax, [win_x + ebx]
     add eax, BORDER
@@ -369,46 +671,113 @@ draw_window:
     add ecx, TITLE_H
     mov edx, [win_w + ebx]
     sub edx, BORDER * 2
-    mov esi, [win_h + ebx]
-    sub esi, TITLE_H + BORDER
-    FILL eax, ecx, edx, esi, [col_win]
-
-    mov eax, [win_draw_id]
-    cmp al, [win_z + WIN_COUNT - 1]
-    jne .dim
-    mov edi, [col_title]
-    jmp .bar
-.dim:
-    mov edi, [col_title_dim]
-.bar:
-    mov eax, [win_x + ebx]
-    add eax, BORDER
-    mov ecx, [win_y + ebx]
-    add ecx, BORDER
-    mov edx, [win_w + ebx]
-    sub edx, BORDER * 2
-    mov esi, TITLE_H - BORDER
-    FILL eax, ecx, edx, esi, edi
+    FILL eax, ecx, edx, 1, [col_line]
 
     mov eax, [win_draw_id]
     cmp byte [win_kind + eax], 0
     jne .about
     call draw_terminal
-    jmp .caption
+    jmp .chrome
 .about:
     call draw_about
-.caption:
-    mov ebx, [win_draw_id]
-    shl ebx, 2
-    mov esi, [win_title + ebx]
+.chrome:
     mov eax, [win_x + ebx]
-    add eax, 10
+    add eax, 16
+    mov ecx, [win_y + ebx]
+    add ecx, 16
+    mov edx, [col_red]
+    push ebx
+    mov ebx, ecx
+    mov ecx, 5
+    call draw_disc
+    add eax, 18
+    mov edx, [col_yellow]
+    call draw_disc
+    add eax, 18
+    mov edx, [col_green]
+    call draw_disc
+    pop ebx
+
+    mov esi, [win_title + ebx]
+    call str_len
+    imul eax, FONT
+    mov ecx, [win_w + ebx]
+    sub ecx, eax
+    shr ecx, 1
+    add ecx, [win_x + ebx]
+    mov eax, ecx
     mov ecx, [win_y + ebx]
     add ecx, 8
+    mov edx, [col_ink]
+    push eax
+    mov al, [win_draw_id]
+    cmp al, [win_z + WIN_COUNT - 1]
+    pop eax
+    je .title
+    mov edx, [col_menu_dim]
+.title:
     mov ebx, ecx
-    mov edx, [col_white]
     mov ecx, -1
     call draw_string
+    popad
+    ret
+
+; ESI = string. EAX = length.
+str_len:
+    push esi
+    xor eax, eax
+.more:
+    cmp byte [esi + eax], 0
+    je .done
+    inc eax
+    jmp .more
+.done:
+    pop esi
+    ret
+
+; EAX = cx, EBX = cy, ECX = radius, EDX = color.
+draw_disc:
+    pushad
+    mov [disc_cx], eax
+    mov [disc_cy], ebx
+    mov [disc_r], ecx
+    mov [disc_col], edx
+    mov ecx, [disc_r]
+    neg ecx
+.dy:
+    cmp ecx, [disc_r]
+    jg .done
+    mov edx, [disc_r]
+    neg edx
+.dx:
+    cmp edx, [disc_r]
+    jg .next_y
+    mov eax, ecx
+    imul eax, eax
+    mov ebx, edx
+    imul ebx, ebx
+    add eax, ebx
+    mov ebx, [disc_r]
+    imul ebx, ebx
+    cmp eax, ebx
+    jg .skip
+    mov eax, [disc_cx]
+    add eax, edx
+    mov ebx, [disc_cy]
+    add ebx, ecx
+    push ecx
+    push edx
+    mov edx, [disc_col]
+    call put_pixel
+    pop edx
+    pop ecx
+.skip:
+    inc edx
+    jmp .dx
+.next_y:
+    inc ecx
+    jmp .dy
+.done:
     popad
     ret
 
@@ -453,10 +822,10 @@ draw_terminal:
     mov [cell_row], ecx
     movzx edi, al
     mov eax, ebx
-    shl eax, 3
+    imul eax, FONT
     add eax, [origin_x]
     mov edx, ecx
-    shl edx, 3
+    imul edx, FONT
     add edx, [origin_y]
     mov ebx, edx
     push dword -1
@@ -488,14 +857,17 @@ draw_about:
     mov ecx, -1
     mov esi, about_l1
     call draw_string
-    add ebx, 14
+    add ebx, 22
     mov esi, about_l2
     call draw_string
-    add ebx, 16
+    add ebx, 28
     mov esi, about_l3
     call draw_string
-    add ebx, 12
+    add ebx, 22
     mov esi, about_l4
+    call draw_string
+    add ebx, 22
+    mov esi, about_l5
     call draw_string
     popad
     ret
@@ -617,11 +989,15 @@ draw_char:
     push ecx
     push edx
     mov eax, [ebp + 36]
-    add eax, edx
+    mov ebx, edx
+    shl ebx, 1
+    add eax, ebx
     mov ebx, [ebp + 40]
-    add ebx, ecx
+    mov edi, ecx
+    shl edi, 1
+    add ebx, edi
     mov edx, [ebp + 52]
-    call put_pixel
+    call put_block
     pop edx
     pop ecx
     pop ebx
@@ -631,11 +1007,15 @@ draw_char:
     push ecx
     push edx
     mov eax, [ebp + 36]
-    add eax, edx
+    mov ebx, edx
+    shl ebx, 1
+    add eax, ebx
     mov ebx, [ebp + 40]
-    add ebx, ecx
+    mov edi, ecx
+    shl edi, 1
+    add ebx, edi
     mov edx, [ebp + 48]
-    call put_pixel
+    call put_block
     pop edx
     pop ecx
     pop ebx
@@ -649,6 +1029,197 @@ draw_char:
 .done:
     popad
     ret
+
+; EAX = x, EBX = y, EDX = color. Draws a 2x2 block.
+put_block:
+    push eax
+    push ebx
+    call put_pixel
+    inc eax
+    call put_pixel
+    inc ebx
+    call put_pixel
+    dec eax
+    call put_pixel
+    pop ebx
+    pop eax
+    ret
+
+present:
+    pushad
+    cld
+    mov esi, [fb_back]
+    mov edi, [fb_front]
+    mov ebx, SCREEN_H
+.row:
+    mov ecx, SCREEN_W
+    rep movsd
+    mov eax, [fb_pitch]
+    sub eax, SCREEN_W * 4
+    add esi, eax
+    add edi, eax
+    dec ebx
+    jnz .row
+    popad
+    ret
+
+move_cursor:
+    pushad
+    cli
+    cmp byte [have_cursor], 0
+    je .save
+    mov eax, [mouse_x]
+    cmp eax, [cur_x]
+    jne .restore
+    mov eax, [mouse_y]
+    cmp eax, [cur_y]
+    je .draw
+.restore:
+    call restore_under
+.save:
+    mov eax, [mouse_x]
+    mov [cur_x], eax
+    mov eax, [mouse_y]
+    mov [cur_y], eax
+    call save_under
+    mov byte [have_cursor], 1
+.draw:
+    mov eax, [fb_front]
+    mov [fb_target], eax
+    call draw_cursor
+    mov eax, [fb_back]
+    mov [fb_target], eax
+    sti
+    popad
+    ret
+
+save_under:
+    pushad
+    cld
+    mov eax, [cur_x]
+    mov ebx, [cur_y]
+    mov ecx, CUR_S
+    mov edx, SCREEN_W
+    sub edx, eax
+    cmp ecx, edx
+    jle .w_ok
+    mov ecx, edx
+.w_ok:
+    mov [cur_w], ecx
+    mov ecx, CUR_S
+    mov edx, SCREEN_H
+    sub edx, ebx
+    cmp ecx, edx
+    jle .h_ok
+    mov ecx, edx
+.h_ok:
+    mov [cur_h], ecx
+    mov esi, [fb_front]
+    mov eax, [cur_y]
+    imul eax, [fb_pitch]
+    add esi, eax
+    mov eax, [cur_x]
+    shl eax, 2
+    add esi, eax
+    mov edi, cursor_bg
+    mov ebx, [cur_h]
+.copy:
+    push esi
+    mov ecx, [cur_w]
+    rep movsd
+    pop esi
+    add esi, [fb_pitch]
+    dec ebx
+    jnz .copy
+    popad
+    ret
+
+restore_under:
+    pushad
+    cld
+    mov edi, [fb_front]
+    mov eax, [cur_y]
+    imul eax, [fb_pitch]
+    add edi, eax
+    mov eax, [cur_x]
+    shl eax, 2
+    add edi, eax
+    mov esi, cursor_bg
+    mov ebx, [cur_h]
+.copy:
+    push edi
+    mov ecx, [cur_w]
+    rep movsd
+    pop edi
+    add edi, [fb_pitch]
+    dec ebx
+    jnz .copy
+    popad
+    ret
+
+read_clock:
+    push eax
+    push edi
+    mov edi, clock_str
+    mov al, 0x04
+    call cmos_read
+    and al, 0x3F
+    call store_bcd
+    mov al, ':'
+    stosb
+    mov al, 0x02
+    call cmos_read
+    call store_bcd
+    mov byte [edi], 0
+    pop edi
+    pop eax
+    ret
+
+; AL = CMOS index. Returns AL = data.
+cmos_read:
+    or al, 0x80
+    out 0x70, al
+    in al, 0x71
+    ret
+
+; AL = BCD, writes two digits at EDI.
+store_bcd:
+    push eax
+    shr al, 4
+    and al, 0x0F
+    add al, '0'
+    stosb
+    pop eax
+    and al, 0x0F
+    add al, '0'
+    stosb
+    ret
+
+clock_poll:
+    pushad
+    mov eax, [timer_ticks]
+    sub eax, [clock_stamp]
+    cmp eax, 18
+    jb .done
+    mov eax, [timer_ticks]
+    mov [clock_stamp], eax
+    call read_clock
+    mov esi, clock_str
+    mov edi, clock_prev
+    mov ecx, 6
+    cld
+    repe cmpsb
+    je .done
+    mov esi, clock_str
+    mov edi, clock_prev
+    mov ecx, 6
+    rep movsb
+    mov byte [content_dirty], 1
+.done:
+    popad
+    ret
+
+clock_prev db "00:00", 0
 
 ; EAX = x, EBX = y, EDX = color. Clips to the screen.
 put_pixel:
@@ -670,7 +1241,7 @@ put_pixel:
     mov ecx, eax
     shl ecx, 2
     add edi, ecx
-    add edi, [fb_ptr]
+    add edi, [fb_target]
     mov [edi], edx
 .no:
     pop edi
@@ -736,7 +1307,7 @@ fill_rect:
     mov esi, eax
     shl esi, 2
     add edi, esi
-    add edi, [fb_ptr]
+    add edi, [fb_target]
     mov eax, [ebp + 24]
     mov esi, [fb_pitch]
     mov ebx, ecx
@@ -770,10 +1341,22 @@ gui_init_colors:
     COLOR col_title, 18, 72, 138
     COLOR col_title_dim, 78, 96, 118
     COLOR col_win, 232, 236, 242
-    COLOR col_border, 12, 24, 40
+    COLOR col_border, 210, 210, 216
     COLOR col_white, 255, 255, 255
     COLOR col_black, 0, 0, 0
-    COLOR col_ink, 16, 32, 56
+    COLOR col_ink, 28, 28, 30
+    COLOR col_menu, 32, 32, 34
+    COLOR col_menu_dim, 176, 176, 184
+    COLOR col_dock, 46, 46, 50
+    COLOR col_shadow, 10, 22, 40
+    COLOR col_line, 198, 198, 204
+    COLOR col_red, 255, 95, 87
+    COLOR col_yellow, 254, 188, 46
+    COLOR col_green, 40, 200, 64
+    COLOR col_icon_term, 28, 28, 32
+    COLOR col_icon_about, 36, 110, 196
+    COLOR col_win, 245, 245, 247
+    COLOR col_title_dim, 232, 232, 236
     mov esi, vga_rgb
     mov edi, vga_pal
     mov ecx, 16
@@ -890,7 +1473,7 @@ term_clear:
     rep stosb
     mov dword [term_col], 0
     mov dword [term_row], 0
-    mov byte [dirty], 1
+    mov byte [content_dirty], 1
     pop edi
     pop ecx
     pop eax
@@ -918,7 +1501,7 @@ term_putc:
     call term_scroll
     mov dword [term_row], TERM_ROWS - 1
 .mark:
-    mov byte [dirty], 1
+    mov byte [content_dirty], 1
 .out:
     pop ebx
     pop eax
@@ -940,13 +1523,13 @@ term_backspace:
     imul ebx, TERM_COLS
     add ebx, [term_col]
     mov byte [term_buf + ebx], ' '
-    mov byte [dirty], 1
+    mov byte [content_dirty], 1
 .out:
     pop ebx
     ret
 
 term_recolor:
-    mov byte [dirty], 1
+    mov byte [content_dirty], 1
     ret
 
 term_scroll:

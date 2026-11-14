@@ -184,12 +184,12 @@ mouse_apply:
 .y_hi:
     mov [mouse_y], edx
     mov byte [mouse_moved], 1
-    mov byte [dirty], 1
+    mov byte [cursor_dirty], 1
 
 .buttons:
     and bl, 7
     mov [mouse_btn], bl
-    mov byte [dirty], 1
+    mov byte [cursor_dirty], 1
     pop edx
     pop ebx
     pop eax

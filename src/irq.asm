@@ -40,7 +40,7 @@ pic_remap:
     call io_wait
 
     ; IRQ1 keyboard and IRQ2 cascade. IRQ12 is slave input 4.
-    mov al, 0xF9
+    mov al, 0xF8
     mov dx, 0x21
     out dx, al
     mov al, 0xEF
@@ -111,6 +111,10 @@ isr_common:
     mov gs, ax
 
     mov ebx, [esp + 36]
+    cmp ebx, 32
+    jne .not_tick
+    inc dword [timer_ticks]
+.not_tick:
     cmp ebx, 33
     jne .not_kbd
     call keyboard_handle
