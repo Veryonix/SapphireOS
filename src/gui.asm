@@ -159,8 +159,12 @@ item_new db "New Terminal", 0
 item_close db "Close Window", 0
 item_clear db "Clear", 0
 item_copy db "Copy", 0
+item_paste db "Paste", 0
 item_zoom db "Zoom", 0
 item_show db "Show All", 0
+CLIP_MAX equ 69
+clipboard times CLIP_MAX + 1 db 0
+clip_len dd 0
 about_l1 db "SapphireOS", 0
 about_l2 db "A small desktop.", 0
 about_l3 db "Drag a title bar.", 0
@@ -566,7 +570,12 @@ hit_dropdown:
     cmp eax, edx
     jl .miss
     mov ebx, edx
-    add ebx, DROP_H * 2
+    mov ecx, DROP_H * 2
+    cmp byte [menu_open], 2
+    jne .hok
+    mov ecx, DROP_H * 3
+.hok:
+    add ebx, ecx
     cmp eax, ebx
     jge .miss
     sub eax, edx
@@ -632,13 +641,21 @@ menu_action:
     mov byte [win_vis + eax], 0
     jmp .done
 .edit:
-    test eax, eax
-    jnz .done
+    cmp eax, 1
+    je .copy
+    cmp eax, 2
+    je .paste
     call focus_front_term
     call term_clear
     mov dword [line_len], 0
     mov byte [line_buf], 0
     call shell_prompt
+    jmp .done
+.copy:
+    call edit_copy
+    jmp .done
+.paste:
+    call edit_paste
     jmp .done
 .view:
     test eax, eax
@@ -1178,7 +1195,12 @@ draw_dropdown:
     call menu_xy
     mov [origin_x], eax
     mov [origin_y], ebx
-    FILL eax, ebx, DROP_W, DROP_H * 2, [col_win]
+    mov ecx, DROP_H * 2
+    cmp byte [menu_open], 2
+    jne .panel
+    mov ecx, DROP_H * 3
+.panel:
+    FILL eax, ebx, DROP_W, ecx, [col_win]
     FILL eax, ebx, DROP_W, 1, [col_line]
     movzx eax, byte [menu_open]
     cmp eax, 1
@@ -1189,19 +1211,40 @@ draw_dropdown:
     je .view
     mov esi, title_term
     mov edi, title_about
-    jmp .items
+    xor ebp, ebp
+    jmp .two
 .file:
     mov esi, item_new
     mov edi, item_close
-    jmp .items
+    xor ebp, ebp
+    jmp .two
 .edit:
     mov esi, item_clear
-    mov edi, item_copy
-    jmp .items
+    mov eax, [origin_x]
+    add eax, 8
+    mov ebx, [origin_y]
+    add ebx, 2
+    mov edx, [col_ink]
+    mov ecx, -1
+    call draw_string
+    mov esi, item_copy
+    mov eax, [origin_x]
+    add eax, 8
+    mov ebx, [origin_y]
+    add ebx, DROP_H + 2
+    call draw_string
+    mov esi, item_paste
+    mov eax, [origin_x]
+    add eax, 8
+    mov ebx, [origin_y]
+    add ebx, DROP_H * 2 + 2
+    call draw_string
+    jmp .out
 .view:
     mov esi, item_zoom
     mov edi, item_show
-.items:
+    xor ebp, ebp
+.two:
     mov eax, [origin_x]
     add eax, 8
     mov ebx, [origin_y]
@@ -1214,12 +1257,82 @@ draw_dropdown:
     add eax, 8
     mov ebx, [origin_y]
     add ebx, DROP_H + 2
-    cmp byte [menu_open], 2
-    jne .ink2
-    mov edx, [col_menu_dim]
-.ink2:
     call draw_string
 .out:
+    popad
+    ret
+
+; Copy the current input line, or the last non-empty terminal row.
+edit_copy:
+    pushad
+    call focus_front_term
+    mov ecx, [line_len]
+    test ecx, ecx
+    jz .from_term
+    cmp ecx, CLIP_MAX
+    jbe .len_ok
+    mov ecx, CLIP_MAX
+.len_ok:
+    mov esi, line_buf
+    mov edi, clipboard
+    mov [clip_len], ecx
+    cld
+    rep movsb
+    mov eax, [clip_len]
+    mov byte [clipboard + eax], 0
+    jmp .done
+.from_term:
+    call term_active_buf
+    mov esi, edi
+    mov ecx, TERM_ROWS
+.row:
+    dec ecx
+    js .empty
+    mov eax, ecx
+    imul eax, TERM_COLS
+    lea ebx, [esi + eax]
+    mov edx, TERM_COLS
+.trim:
+    dec edx
+    js .row
+    cmp byte [ebx + edx], ' '
+    je .trim
+    inc edx
+    cmp edx, CLIP_MAX
+    jbe .take
+    mov edx, CLIP_MAX
+.take:
+    mov esi, ebx
+    mov edi, clipboard
+    mov ecx, edx
+    mov [clip_len], ecx
+    cld
+    rep movsb
+    mov eax, [clip_len]
+    mov byte [clipboard + eax], 0
+    jmp .done
+.empty:
+    mov dword [clip_len], 0
+    mov byte [clipboard], 0
+.done:
+    popad
+    ret
+
+; Type the clipboard into the front terminal as keystrokes.
+edit_paste:
+    pushad
+    call focus_front_term
+    xor ecx, ecx
+.next:
+    cmp ecx, [clip_len]
+    jae .done
+    mov al, [clipboard + ecx]
+    push ecx
+    call shell_on_char
+    pop ecx
+    inc ecx
+    jmp .next
+.done:
     popad
     ret
 

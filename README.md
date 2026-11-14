@@ -36,7 +36,7 @@ If the video mode cannot be set, SapphireOS keeps the text shell and prints `VBE
 
 ## Desktop
 
-A menu bar sits on top and a dock sits along the bottom. File, Edit, View, and Window open menus. Red closes a window, yellow minimizes it, and green zooms it. Dock icons bring a window back. The clock is 12-hour.
+A menu bar sits on top and a dock sits along the bottom. File, Edit, View, and Window open menus. Edit has Clear, Copy, and Paste for the terminal line. Red closes a window, yellow minimizes it, and green zooms it. Dock icons bring a window back. The clock is 12-hour.
 
 Move the mouse to move the cursor. Drag a window by its title bar. Drag the bottom-right corner to resize. Click a window, or its dock icon, to raise it.
 
