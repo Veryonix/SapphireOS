@@ -981,7 +981,7 @@ draw_char:
 .col:
     cmp edx, 8
     jge .next_row
-    test bl, 0x80
+    test bl, 1
     jnz .fg
     cmp dword [ebp + 52], -1
     je .advance
@@ -1020,7 +1020,7 @@ draw_char:
     pop ecx
     pop ebx
 .advance:
-    shl bl, 1
+    shr bl, 1
     inc edx
     jmp .col
 .next_row:
